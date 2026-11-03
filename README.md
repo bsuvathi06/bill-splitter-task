@@ -135,6 +135,18 @@ When you change `api/wrangler.jsonc`, refresh the `Env` types:
 pnpm --filter bill-splitter-api cf-typegen
 ```
 
+## Decisions
+
+### 1. Zero-Decimal Integer Ledger Strategy
+We chose to store all monetary amounts as whole integers representing cents (`totalCents` and `amountCents`) rather than using standard floating-point decimals. This architectural choice completely avoids native IEEE-754 binary floating-point precision extraction errors during mathematical splits and ledger balance state queries, which is crucial for handling programmatic micro-transactions safely.
+
+### 2. Defensive Concurrency via Atomic Database Rows
+To eliminate race conditions when parallel network connections try to pay the exact same bill share simultaneously, we implemented a strict atomic update condition (`UPDATE shares SET paid_at = ?, idempotency_key = ? WHERE id = ? AND paid_at IS NULL`). Checking `paid_at IS NULL` directly inside the transactional operation ensures that only one concurrent worker process modifies the database row, forcing any secondary late request to fail safely with a 409 conflict or fall back gracefully.
+
+### 3. Chronological Remainder Allocation Logic
+When an invoice amount cannot be divided evenly among all members of a home, unallocated fractional cents remain. We resolved this by querying home occupants sorted by their initial addition sequence (`ORDER BY created_at ASC`) and distributing the extra remainder pennies one-by-one to the oldest members first. This guarantees that the calculated sub-shares always sum precisely to the parent bill's exact integer value without structural capital drift.
+
+
 ## Rules for the tests
 
 - The visible tests are in `api/test`. They start with a failing result. Your job is to make them pass.
